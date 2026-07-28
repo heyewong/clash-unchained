@@ -16,3 +16,13 @@ ss-unchained-*
 
 # Go
 vendor/
+
+# Generated output
+clash-global-script.js
+clash-script-injection.js
+
+# User config (contains real credentials)
+config.yaml
+
+# Pi agent
+.pi/

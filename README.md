@@ -2,19 +2,22 @@
 
 [English](README.md) | [中文](README_CN.md)
 
-> Turn any Clash subscription into an AI-unlocking proxy with one script.
+> A global extension script for Clash Verge Rev that adds residential chain proxy and AI traffic routing — works with **any** subscription, zero per-subscription configuration.
 
 ## What It Does
 
-**Unlock the full potential of AI services without compromise.**
+AI providers block datacenter IPs. This tool generates a **global Clash Verge extension script** that:
 
-In the era of LLMs, many AI providers block datacenter IPs. This tool generates a Clash Verge script that adds a chain proxy routing your AI traffic through a static long-term residential IP — keeping your regular browsing on your fast subscription proxies.
+1. Automatically detects your subscription's main proxy group (no need to configure per subscription)
+2. Injects a static residential SOCKS5 node with chain proxy (`dialer-proxy`) bound to the detected group
+3. Injects an AI routing group and 75+ AI domain rules
+4. Adds Tailscale bypass (rules + DNS) — optional
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                    AI Service Traffic                           │
-│  Device → AI-Services → My-Residential-IP (via Subscription)  │
-│       → AI Service                                             │
+│  Device → LLM-Providers → Residential-US (via Subscription)   │
+│       → Residential SOCKS5 → AI Service                        │
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
@@ -30,19 +33,18 @@ In the era of LLMs, many AI providers block datacenter IPs. This tool generates 
 
 ## Features
 
-- **Interactive Setup Wizard** — No config files to edit. Just run and answer a few questions.
-- **Zero Impact on Subscription** — The generated script runs automatically on every subscription refresh.
-- **100% Local** — Never leaks your subscription info. All processing happens locally.
-- **Set It and Forget It** — No background daemon. Configure once, enjoy forever.
-- **75+ Built-in AI Domains** — OpenAI, Claude, Gemini, Copilot, and more
-- **Tailscale Bypass** — Keep your Tailscale traffic direct, no extra config needed
-- **Cross-Platform** — macOS, Linux, Windows supported
+- **One Script for All Subscriptions** — Switch between subscriptions freely, no per-sub config
+- **Auto-Detect Main Proxy Group** — No need to know or fill in your subscription group name
+- **Interactive Setup Wizard** — Paste your residential proxy string, answer 3 questions, done
+- **Auto-Install to Clash Verge** — Detects your Clash Verge installation path (macOS/Linux/Windows)
+- **75+ Built-in AI Domains** — OpenAI, Claude, Gemini, Copilot, Perplexity, HuggingFace, Poe, and more
+- **Tailscale Bypass** — Full three-layer defense: bypass list + DIRECT rules + DNS (`direct-nameserver-follow-policy`)
+- **Idempotent** — Safe to run multiple times, won't duplicate injections
+- **100% Local** — All processing on your machine
 
 ## Quick Start
 
 ### 1. Download
-
-Grab the binary for your platform from the [Releases](https://github.com/itrowa/clash-unchained/releases) page:
 
 | Platform | File |
 |----------|------|
@@ -52,7 +54,6 @@ Grab the binary for your platform from the [Releases](https://github.com/itrowa/
 | Windows | `clash-unchained-windows-amd64.exe` |
 
 ```bash
-# Make it executable (macOS/Linux)
 chmod +x clash-unchained-*
 ```
 
@@ -62,121 +63,99 @@ chmod +x clash-unchained-*
 ./clash-unchained
 ```
 
-The wizard will ask a few questions — residential proxy credentials, your subscription's proxy group name, and display names for Clash UI. It then saves `config.yaml` and generates `clash-script-injection.js` in one shot.
+The wizard asks you for:
+1. **Residential proxy credentials** — Paste the connection string from your provider
+2. **Display names** — Node name and AI group name (defaults are fine)
+3. **Tailscale** — Enable/disable Tailscale bypass
+4. **Output file** — Save path
 
-> **Re-run the wizard anytime** with `./clash-unchained -r`
+After confirmation, it generates the global script and asks if you want to **auto-install** it to Clash Verge Rev.
 
-### 3. Install in Clash Verge
+> **Re-run the wizard anytime**: `./clash-unchained -r`
 
-1. Open Clash Verge → Profiles → Find your subscription → Right Click → **Extend Script**
-2. Paste the content of `clash-script-injection.js` into the script editor
-3. Save and close
-4. Refresh your subscription — done!
+### 3. Activate in Clash Verge
 
-### 4. Verify It's Working
+- **If auto-install succeeded**: Go to Clash Verge → **Profiles** → click **Update All Subscriptions**
+- **If manual**: Open Clash Verge → **Settings** → **Extensions** → **Global Extension Script** → paste the generated content → save → go to **Profiles** → **Update All Subscriptions**
 
-Add `ipify.org` to your `config.yaml` temporarily, regenerate, and reinstall:
+That's it. Switch between any of your subscriptions freely — the chain proxy works with all of them.
 
-```yaml
-ai_domains:
-  proxy_group: "AI-Services"
-  use_builtin: true
-  custom:
-    - "ipify.org"   # temporary — remove after testing
-```
-
-```bash
-./clash-unchained -o clash-script-injection.js
-```
-
-Then run:
+### 4. Verify
 
 ```bash
 # Your subscription node's IP (baseline)
-curl https://api.ipify.org
+curl -x http://127.0.0.1:7897 https://api.ipify.org
 
-# IP seen when routed through AI-Services (adjust port to match your Clash config)
-curl --proxy socks5h://127.0.0.1:7897 https://api.ipify.org
+# Check the running proxy chains
+curl -s --unix-socket /tmp/verge/verge-mihomo.sock http://localhost/proxies/LLM-Providers
 ```
 
-The second IP should match your residential proxy provider's IP. If the two IPs differ, the chain proxy is working correctly. ✅
+AI domains (e.g., `openai.com`, `anthropic.com`) will show `Chains: Residential-US → LLM-Providers` in Clash Verge logs.
 
-You can also check in Clash Verge: open **Logs** and look for a `chatgpt.com` entry — it should show `Chains: AI-Services / My-Residential-IP`.
+## Advanced: config.yaml
 
-> After testing, remove `ipify.org` from `custom` and regenerate.
-
-## Advanced Configuration
-
-Power users can edit `config.yaml` directly (see `config.yaml.example` for reference), then regenerate:
+Power users can edit `config.yaml` directly then regenerate:
 
 ```bash
-./clash-unchained -o clash-script-injection.js
+./clash-unchained -o clash-global-script.js
 ```
 
-### `nodes[]` — Proxy Nodes to Inject
+### `nodes[]` — Proxy Nodes
 
 | Field | Description | Required |
 |-------|-------------|----------|
 | `name` | Node label shown in Clash UI | Yes |
-| `type` | Proxy type (currently `socks5`) | No (default: `socks5`) |
+| `type` | `socks5` (default) | No |
 | `server` | Residential proxy server address | Yes |
 | `port` | Proxy port | Yes |
 | `username` | SOCKS5 username | Yes |
 | `password` | SOCKS5 password | Yes |
-| `dialer_proxy` | Subscription group to chain through | Yes |
 
-### `proxy_groups[]` — Proxy Groups to Inject
+> `dialer-proxy` is auto-detected at runtime. No need to configure it.
+
+### `proxy_groups[]` — Proxy Groups
 
 | Field | Description | Required |
 |-------|-------------|----------|
-| `name` | Group label shown in Clash UI | Yes |
-| `type` | Group type (`select`, `direct`, etc.) | Yes |
-| `proxies` | List of node names in this group | For `select` type |
-| `tailscale_bypass` | Inject Tailscale DIRECT rules + DNS | No |
-
-> When `tailscale_bypass: true` is set, no proxy group is injected (DIRECT is Clash built-in). Instead, routing rules for `*.ts.net` and Tailscale IP ranges are added along with Tailscale DNS configuration.
+| `name` | Group label | Yes |
+| `type` | `select` | Yes |
+| `proxies` | Node names in this group | Yes |
 
 ### `ai_domains` — AI Domain Routing
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `proxy_group` | Which group to route AI traffic through | Required |
-| `use_builtin` | Use built-in AI domain list (75+ domains) | `true` |
-| `custom` | Extra domains to add | - |
+| `proxy_group` | Group to route AI traffic through | Required |
+| `use_builtin` | Use built-in 75+ domain list | `true` |
+| `custom` | Extra domains | - |
+
+### `tailscale` — Tailscale Bypass
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enable` | Enable Tailscale bypass with full DNS config | `false` |
 
 ## How It Works
 
-The generator creates a JavaScript script that Clash Verge runs on every subscription refresh. The script:
+The tool generates a **global extension script** (`Script.js`) that Clash Verge applies to every subscription. Unlike per-subscription scripts, the global script:
 
-1. Injects your residential IP as a SOCKS5 node with `dialer-proxy` pointing to your subscription group
-2. Injects an AI routing group containing that node
-3. Prepends AI domain rules so matched traffic routes through the group
+1. **Auto-detects** the subscription's main `select` group by scanning `proxy-groups`, skipping AI groups
+2. **Injects** the residential SOCKS5 node with `dialer-proxy` bound to the detected group
+3. **Prepends** AI domain rules (Tailscale rules above AI rules, if enabled)
 
-```
-Device sends request to openai.com
-  → Matches DOMAIN-SUFFIX rule → routed to AI-Services group
-  → AI-Services selects My-Residential-IP node
-  → My-Residential-IP connects via your subscription (dialer_proxy)
-  → Subscription proxy connects to residential SOCKS5 server
-  → Residential SOCKS5 connects to OpenAI
-  → OpenAI sees your residential IP, not a datacenter IP
-```
+This means **one generated script works for all your subscriptions**. Add a new subscription URL in Clash Verge — it gets chain proxy support automatically.
 
-## Build from Source
+## Changelog (v0.2.0)
 
-```bash
-git clone https://github.com/itrowa/clash-unchained.git
-cd clash-unchained
-go build -o clash-unchained .
-```
-
-## Trivia
-
-Built in a region where Claude is unavailable, with Claude.
-
-## Acknowledgments
-
-We acknowledge and appreciate the Linux.do community: https://linux.do/
+- **Breaking**: Changed from per-subscription script to global Script.js
+- **Breaking**: Removed `dialer_proxy` config field (auto-detected)
+- **Breaking**: Removed `tailscale_bypass` proxy group flag (replaced by `tailscale.enable`)
+- **New**: Auto-detect subscription main proxy group at runtime
+- **New**: Auto-install to Clash Verge Rev (macOS/Linux/Windows)
+- **New**: Idempotency protection (safe to run multiple times)
+- **Fix**: `nameserver-policy` key now uses `+.ts.net` (matches subdomains)
+- **Fix**: Added `direct-nameserver-follow-policy: true` (critical for Tailscale DNS)
+- **Fix**: `fake-ip-filter` includes both `*.ts.net` and `+.ts.net`
 
 ## License
 

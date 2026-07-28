@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -17,6 +20,39 @@ import (
 
 const configFilePath = "config.yaml"
 
+// clashVergeProfilesDir detects Clash Verge Rev's profiles directory.
+// Returns empty string if the directory doesn't exist on this machine.
+// Platform paths (Electron app.getPath('userData') convention):
+//   macOS:   ~/Library/Application Support/io.github.clash-verge-rev.clash-verge-rev/profiles/
+//   Linux:   ~/.config/io.github.clash-verge-rev.clash-verge-rev/profiles/
+//   Windows: %APPDATA%/io.github.clash-verge-rev.clash-verge-rev/profiles/
+func clashVergeProfilesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	var base string
+	switch runtime.GOOS {
+	case "darwin":
+		base = filepath.Join(home, "Library", "Application Support")
+	case "linux":
+		base = filepath.Join(home, ".config")
+	case "windows":
+		base = os.Getenv("APPDATA")
+		if base == "" {
+			return ""
+		}
+	default:
+		return ""
+	}
+	dir := filepath.Join(base, "io.github.clash-verge-rev.clash-verge-rev", "profiles")
+	// 确认目录存在，避免错误引导
+	if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		return dir
+	}
+	return ""
+}
+
 // proxyCredentials holds parsed residential proxy connection info.
 type proxyCredentials struct {
 	server   string
@@ -25,9 +61,8 @@ type proxyCredentials struct {
 	password string
 }
 
-// RunWizard runs the interactive setup wizard. It collects user input, saves
-// config.yaml, generates the injection script, and prints next-step instructions.
-// If outputFile is non-empty (from -o flag), it skips asking the user for a filename.
+// RunWizard runs the interactive setup wizard.
+// Generates a global Script.js for Clash Verge Rev with auto-detection.
 func RunWizard(outputFile string) error {
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -36,50 +71,38 @@ func RunWizard(outputFile string) error {
 	fmt.Println()
 
 	// ── Step 1: Residential proxy credentials ──────────────────────────────
-	printStep(1, "住宅代理信息", "这是 AI 服务最终看到的出口 IP")
+	printStep(1, "住宅代理信息", "AI 服务最终看到的出口 IP")
 
 	creds := promptProxyCredentials(scanner)
 
-	// ── Step 2: Subscription linkage ───────────────────────────────────────
-	printStep(2, "Clash 订阅配置", "通过哪个订阅节点组连接到住宅 IP")
-
-	fmt.Println("  打开 Clash Verge → 配置 → 点开你的订阅，找最顶层的手动选择组")
-	fmt.Println("  常见名称：Proxies、节点选择、PROXY（注意大小写需完全一致）")
-	fmt.Println()
-	dialerProxy := promptValidated(scanner, field{
-		label:      "订阅里的主代理组名称",
-		defaultVal: "Proxies",
-		example:    "Proxies  或  节点选择",
-	}, validateNonEmpty)
-
-	// ── Step 3: Display names ──────────────────────────────────────────────
-	printStep(3, "Clash UI 显示名称", "随便起，会出现在 Clash 的节点列表和策略组里")
+	// ── Step 2: Display names ──────────────────────────────────────────────
+	printStep(2, "Clash UI 显示名称", "会出现在 Clash 的节点列表和策略组里")
 
 	nodeName := promptValidated(scanner, field{
 		label:      "住宅节点名称",
-		defaultVal: "My-Residential-IP",
-		example:    "My-Residential-IP  或  住宅节点",
+		defaultVal: "Residential-US",
+		example:    "Residential-US  或  住宅节点",
 	}, validateNonEmpty)
 
 	groupName := promptValidated(scanner, field{
 		label:      "AI 路由组名称",
-		defaultVal: "AI-Services",
-		example:    "AI-Services  或  AI专用",
+		defaultVal: "LLM-Providers",
+		example:    "LLM-Providers  或  AI专用",
 	}, validateNonEmpty)
 
-	// ── Step 4: Optional features ──────────────────────────────────────────
-	printStep(4, "可选功能", "")
+	// ── Step 3: Tailscale ──────────────────────────────────────────────────
+	printStep(3, "Tailscale 直连", "开启后 ts.net + 100.64.0.0/10 走 DIRECT，含完整 DNS 配置")
 
-	fmt.Println("  Tailscale 直连：开启后 *.ts.net 流量走 DIRECT，不经过任何代理")
 	tailscale := promptYesNo(scanner, "启用 Tailscale 直连", "y")
 
-	// ── Step 5: Output file ────────────────────────────────────────────────
+	// ── Step 4: Output ────────────────────────────────────────────────────
 	if outputFile == "" {
 		fmt.Println()
+		printStep(4, "输出文件", "")
 		outputFile = promptValidated(scanner, field{
-			label:      "注入脚本输出文件名",
-			defaultVal: "clash-script-injection.js",
-			example:    "clash-script-injection.js",
+			label:      "脚本输出路径",
+			defaultVal: "clash-global-script.js",
+			example:    "clash-global-script.js",
 		}, validateFilename)
 	}
 
@@ -87,13 +110,12 @@ func RunWizard(outputFile string) error {
 	cfg := &config.Config{
 		Nodes: []config.NodeConfig{
 			{
-				Name:        nodeName,
-				Type:        "socks5",
-				Server:      creds.server,
-				Port:        creds.port,
-				Username:    creds.username,
-				Password:    creds.password,
-				DialerProxy: dialerProxy,
+				Name:     nodeName,
+				Type:     "socks5",
+				Server:   creds.server,
+				Port:     creds.port,
+				Username: creds.username,
+				Password: creds.password,
 			},
 		},
 		ProxyGroups: []config.ProxyGroupConfig{
@@ -107,13 +129,9 @@ func RunWizard(outputFile string) error {
 			ProxyGroup: groupName,
 			UseBuiltin: true,
 		},
-	}
-	if tailscale {
-		cfg.ProxyGroups = append(cfg.ProxyGroups, config.ProxyGroupConfig{
-			Name:            "Tailscale",
-			Type:            "direct",
-			TailscaleBypass: true,
-		})
+		Tailscale: config.TailscaleConfig{
+			Enable: tailscale,
+		},
 	}
 
 	// ── Summary ────────────────────────────────────────────────────────────
@@ -123,7 +141,7 @@ func RunWizard(outputFile string) error {
 	fmt.Println("─────────────────────────────────────────")
 	fmt.Printf("  住宅节点    : %s  (%s:%d)\n", nodeName, creds.server, creds.port)
 	fmt.Printf("  用户名      : %s\n", creds.username)
-	fmt.Printf("  经由订阅组  : %s\n", dialerProxy)
+	fmt.Printf("  经由订阅组  : 自动检测（无需配置）\n")
 	fmt.Printf("  AI 路由组   : %s\n", groupName)
 	fmt.Printf("  Tailscale   : %s\n", yesNo(tailscale))
 	fmt.Printf("  输出文件    : %s\n", outputFile)
@@ -138,7 +156,7 @@ func RunWizard(outputFile string) error {
 	if err := saveConfig(cfg); err != nil {
 		return fmt.Errorf("保存配置文件失败：%w", err)
 	}
-	fmt.Printf("\n✓ 配置已保存 → %s\n", configFilePath)
+	fmt.Printf("✓ 配置已保存 → %s\n", configFilePath)
 
 	// ── Generate script ────────────────────────────────────────────────────
 	script, err := generator.Generate(cfg)
@@ -148,17 +166,45 @@ func RunWizard(outputFile string) error {
 	if err := os.WriteFile(outputFile, []byte(script), 0644); err != nil {
 		return fmt.Errorf("写入脚本失败：%w", err)
 	}
-	fmt.Printf("✓ 注入脚本已生成 → %s\n", outputFile)
+	fmt.Printf("✓ 全局脚本已生成 → %s\n", outputFile)
 
-	// ── Next steps ─────────────────────────────────────────────────────────
+	// ── Auto-install to Clash Verge Rev ────────────────────────────────────
+	profilesDir := clashVergeProfilesDir()
+	if profilesDir != "" {
+		targetPath := filepath.Join(profilesDir, "Script.js")
+		fmt.Println()
+		if promptYesNo(scanner, "是否自动安装到 Clash Verge Rev？", "y") {
+			// Backup existing Script.js (if any)
+			if _, err := os.Stat(targetPath); err == nil {
+				backupDir := filepath.Join(profilesDir, "backups")
+				os.MkdirAll(backupDir, 0755)
+				backupName := fmt.Sprintf("Script.js.bak.%s", time.Now().Format("20060102_150405"))
+				backupPath := filepath.Join(backupDir, backupName)
+				os.Rename(targetPath, backupPath)
+				fmt.Printf("  ✓ 已备份原脚本 → %s\n", backupPath)
+			}
+
+			// Write new Script.js
+			if err := os.WriteFile(targetPath, []byte(script), 0644); err != nil {
+				fmt.Printf("  ✗ 写入失败：%v\n", err)
+				fmt.Println("  请手动将生成的脚本粘贴到 Clash Verge 全局扩展脚本中。")
+			} else {
+				fmt.Printf("  ✓ 已安装到 %s\n", targetPath)
+				fmt.Println()
+				fmt.Println("  ⚠️  重要：在 Clash Verge「订阅」面板点击「更新所有订阅」触发重新编译")
+				fmt.Println("       直接写文件不会触发重编译，必须让 Clash Verge 重新读取全局脚本")
+			}
+		}
+	}
+
 	fmt.Println()
 	fmt.Println("─────────────────────────────────────────")
-	fmt.Println("  下一步：安装到 Clash Verge")
+	fmt.Println("  下一步")
 	fmt.Println("─────────────────────────────────────────")
-	fmt.Println("  1. 打开 Clash Verge → 配置")
-	fmt.Println("  2. 找到你的订阅 → 右键 → 扩展脚本")
-	fmt.Printf("  3. 将 %s 的内容粘贴到脚本编辑器\n", outputFile)
-	fmt.Println("  4. 保存 → 刷新订阅 → 完成！")
+	fmt.Println("  1. 打开 Clash Verge → 订阅 面板")
+	fmt.Println("  2. 点击「更新所有订阅」")
+	fmt.Println("  3. 如果未自动安装，先将脚本内容粘贴到 设置 → 扩展 → 全局扩展脚本")
+	fmt.Println("  4. 任意订阅自动适配，新增订阅也无需额外配置")
 	fmt.Println()
 
 	return nil
@@ -166,8 +212,6 @@ func RunWizard(outputFile string) error {
 
 // ── proxy credential input ─────────────────────────────────────────────────
 
-// promptProxyCredentials first offers a one-line paste, then falls back to
-// field-by-field entry if the user presses Enter or the input can't be parsed.
 func promptProxyCredentials(scanner *bufio.Scanner) proxyCredentials {
 	fmt.Println("  代理供应商后台通常提供一键复制的连接字符串，可直接粘贴：")
 	fmt.Println()
@@ -200,11 +244,9 @@ func promptProxyCredentials(scanner *bufio.Scanner) proxyCredentials {
 		fmt.Println()
 	}
 
-	// Fallback: field by field
 	return promptProxyFields(scanner)
 }
 
-// promptProxyFields collects server, port, username, password individually.
 func promptProxyFields(scanner *bufio.Scanner) proxyCredentials {
 	server := promptValidated(scanner, field{
 		label:   "代理服务器地址",
@@ -245,41 +287,27 @@ func promptProxyFields(scanner *bufio.Scanner) proxyCredentials {
 
 // ── connection string parser ───────────────────────────────────────────────
 
-// parseProxyString understands the four common formats residential proxy
-// providers use for one-click copy:
-//
-//	Format 1: host:port:user:pass
-//	Format 2: socks5://user:pass@host:port  (any scheme accepted)
-//	Format 3: user:pass@host:port
-//	Format 4: host:port@user:pass
 func parseProxyString(s string) (*proxyCredentials, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return nil, fmt.Errorf("空字符串")
 	}
 
-	// Format 2: scheme://user:pass@host:port — strip scheme first
 	if idx := strings.Index(s, "://"); idx != -1 {
 		s = s[idx+3:]
 		return parseUserAtHost(s)
 	}
 
-	// Formats 3 & 4: contain exactly one @
 	if strings.Contains(s, "@") {
 		atIdx := strings.Index(s, "@")
 		left := s[:atIdx]
-		// If left side looks like host:port (contains a dot or is an IP), it's format 4
 		hostPart := strings.SplitN(left, ":", 2)[0]
 		if strings.Contains(hostPart, ".") || net.ParseIP(hostPart) != nil {
-			// Format 4: host:port@user:pass
 			return parseHostAtUser(s)
 		}
-		// Format 3: user:pass@host:port
 		return parseUserAtHost(s)
 	}
 
-	// Format 1: host:port:user:pass — exactly four colon-separated fields
-	// Use SplitN with 4 so a password containing ":" is kept intact
 	parts := strings.SplitN(s, ":", 4)
 	if len(parts) == 4 {
 		port, err := strconv.Atoi(parts[1])
@@ -303,7 +331,6 @@ func parseProxyString(s string) (*proxyCredentials, error) {
 	return nil, fmt.Errorf("无法识别格式，请检查是否完整（需包含地址、端口、用户名、密码）")
 }
 
-// parseUserAtHost parses "user:pass@host:port"
 func parseUserAtHost(s string) (*proxyCredentials, error) {
 	atIdx := strings.Index(s, "@")
 	if atIdx < 0 {
@@ -323,7 +350,6 @@ func parseUserAtHost(s string) (*proxyCredentials, error) {
 	return &proxyCredentials{server: host, port: port, username: user, password: pass}, nil
 }
 
-// parseHostAtUser parses "host:port@user:pass"
 func parseHostAtUser(s string) (*proxyCredentials, error) {
 	atIdx := strings.Index(s, "@")
 	if atIdx < 0 {
@@ -359,7 +385,6 @@ func splitHostPort(s string) (host string, port int, err error) {
 }
 
 func splitUserPass(s string) (user, pass string, err error) {
-	// Split on first colon only; password may contain colons
 	idx := strings.Index(s, ":")
 	if idx < 0 {
 		return "", "", fmt.Errorf("用户名密码格式错误 %q（应为 user:pass）", s)
@@ -432,7 +457,6 @@ func promptPassword(scanner *bufio.Scanner, label string) (string, error) {
 	b, err := term.ReadPassword(int(os.Stdin.Fd()))
 	fmt.Println()
 	if err != nil {
-		// Non-TTY fallback (piped input)
 		if scanner.Scan() {
 			return strings.TrimSpace(scanner.Text()), nil
 		}
@@ -491,7 +515,7 @@ func validateFilename(s string) error {
 		return fmt.Errorf("文件名包含非法字符")
 	}
 	if !strings.HasSuffix(s, ".js") {
-		return fmt.Errorf("文件名应以 .js 结尾，例如 clash-script-injection.js")
+		return fmt.Errorf("文件名应以 .js 结尾")
 	}
 	return nil
 }

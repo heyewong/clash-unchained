@@ -8,23 +8,24 @@ import (
 
 // NodeConfig represents a single proxy node to inject into Clash's proxies[] list.
 type NodeConfig struct {
-	Name        string `mapstructure:"name"         yaml:"name"`
-	Type        string `mapstructure:"type"         yaml:"type"`
-	Server      string `mapstructure:"server"       yaml:"server"`
-	Port        int    `mapstructure:"port"         yaml:"port"`
-	Username    string `mapstructure:"username"     yaml:"username"`
-	Password    string `mapstructure:"password"     yaml:"password"`
-	DialerProxy string `mapstructure:"dialer_proxy" yaml:"dialer_proxy"`
+	Name     string `mapstructure:"name"     yaml:"name"`
+	Type     string `mapstructure:"type"     yaml:"type"`
+	Server   string `mapstructure:"server"   yaml:"server"`
+	Port     int    `mapstructure:"port"     yaml:"port"`
+	Username string `mapstructure:"username" yaml:"username"`
+	Password string `mapstructure:"password" yaml:"password"`
 }
 
 // ProxyGroupConfig represents a proxy group to inject into Clash's proxy-groups[] list.
-// Set TailscaleBypass: true on a type:direct entry to inject ts.net DIRECT rules + DNS
-// instead of creating an actual proxy group.
 type ProxyGroupConfig struct {
-	Name            string   `mapstructure:"name"             yaml:"name"`
-	Type            string   `mapstructure:"type"             yaml:"type"`
-	Proxies         []string `mapstructure:"proxies"          yaml:"proxies,omitempty"`
-	TailscaleBypass bool     `mapstructure:"tailscale_bypass" yaml:"tailscale_bypass,omitempty"`
+	Name    string   `mapstructure:"name"    yaml:"name"`
+	Type    string   `mapstructure:"type"    yaml:"type"`
+	Proxies []string `mapstructure:"proxies" yaml:"proxies,omitempty"`
+}
+
+// TailscaleConfig controls Tailscale bypass.
+type TailscaleConfig struct {
+	Enable bool `mapstructure:"enable" yaml:"enable"`
 }
 
 // AIDomainsConfig controls which domains are routed through the AI proxy group.
@@ -38,6 +39,7 @@ type Config struct {
 	Nodes       []NodeConfig       `mapstructure:"nodes"        yaml:"nodes"`
 	ProxyGroups []ProxyGroupConfig `mapstructure:"proxy_groups" yaml:"proxy_groups"`
 	AIDomains   AIDomainsConfig    `mapstructure:"ai_domains"   yaml:"ai_domains"`
+	Tailscale   TailscaleConfig    `mapstructure:"tailscale"    yaml:"tailscale"`
 }
 
 func (c *Config) Validate() error {
